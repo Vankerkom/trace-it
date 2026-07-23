@@ -25,7 +25,9 @@ async function identifyAnimeEpisode(sourceFile: string, apiKey: string, anilist:
     const hashes = await extractFrameHashes(sourceFile);
 
     for (const hash of hashes.values()) {
-        results.push(await search(hash, apiKey, anilist));
+        const response = await search(hash, apiKey, anilist);
+        results.push(response);
+        updateAccountQuota(apiKey, response.quota, response.quotaUsed);
     }
 
     // Filter low-confidence results
@@ -160,8 +162,6 @@ export async function runTraceIt(): Promise<void> {
             console.error(`Frame extraction/search failed for: ${file}`, error);
             failedCount++;
             continue;
-        } finally {
-            consumeQuota(activeKey, FRAME_EXTRACT_COUNT);
         }
 
         if (!winner) {
@@ -320,22 +320,18 @@ export async function getActiveKey(
     return undefined;
 }
 
-export function consumeQuota(apiKey: string, amount: number): void {
+export function updateAccountQuota(apiKey: string, quota: number, quotaUsed: number): void {
     const cachedAccount = accountCache.get(apiKey);
 
     if (!cachedAccount) {
         return;
     }
 
-    const oldQuotaUsed = Number(cachedAccount.account.quotaUsed); // Number Temp fix for API returning a string.
-    cachedAccount.account.quotaUsed = oldQuotaUsed + amount;
-    console.log(`consumeQuota ${oldQuotaUsed} -> ${cachedAccount.account.quotaUsed}`);
+    console.log(`updateAccountQuota ${cachedAccount.account.quotaUsed} -> ${quotaUsed}`);
 
-    // Clamp in case of rounding or server-side differences.
-    cachedAccount.account.quotaUsed = Math.min(
-        cachedAccount.account.quotaUsed,
-        cachedAccount.account.quota
-    );
+    cachedAccount.account.quota = quota;
+    cachedAccount.account.quotaUsed = quotaUsed;
+    cachedAccount.fetchedAt = Date.now();
 }
 
 async function createDirectory(path: string): Promise<void> {

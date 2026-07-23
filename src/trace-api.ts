@@ -72,6 +72,8 @@ export type TraceMoeResponse = {
     frameCount: number;
     error: string;
     result: TraceMoeResult[];
+    quota: number;
+    quotaUsed: number;
 };
 
 export async function search(
