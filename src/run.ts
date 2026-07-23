@@ -349,12 +349,7 @@ async function searchWithQuotaFallback(
 ): Promise<TraceMoeResponse> {
     let apiKey = await getActiveKey(FRAME_EXTRACT_COUNT);
 
-    if (apiKey === undefined) {
-        reportQuotaExhausted();
-        throw new QuotaExhaustedFatalError();
-    }
-
-    while (true) {
+    while (apiKey !== undefined) {
         try {
             const response = await search(hashes, apiKey, anilist);
             updateAccountQuota(apiKey, response.quota, response.quotaUsed);
@@ -372,14 +367,16 @@ async function searchWithQuotaFallback(
 
             const nextKey = await getActiveKey(FRAME_EXTRACT_COUNT);
 
-            if (nextKey === undefined || nextKey === apiKey) {
-                reportQuotaExhausted();
-                throw new QuotaExhaustedFatalError();
+            if (nextKey === apiKey) { // Switched to the same key, we wanted to switch so stop.
+                break;
             }
 
             apiKey = nextKey;
         }
     }
+
+    reportQuotaExhausted();
+    throw new QuotaExhaustedFatalError();
 }
 
 async function createDirectory(path: string): Promise<void> {
