@@ -1,4 +1,4 @@
-import {Account, checkUserQuota, queryAccount, search, TraceMoeResult} from "./trace-api.ts";
+import {Account, checkUserQuota, queryAccount, QuotaExceededError, search, TraceMoeResponse, TraceMoeResult} from "./trace-api.ts";
 import {extractFrameHashes, FRAME_EXTRACT_COUNT} from "./extract.ts";
 import {config} from "./config.ts";
 import {resolveVideoFiles} from "./scan.ts";
@@ -19,15 +19,14 @@ type EpisodeVote = {
     bestSimilarity: number;
 };
 
-async function identifyAnimeEpisode(sourceFile: string, apiKey: string, anilist: number | undefined) {
+async function identifyAnimeEpisode(sourceFile: string, anilist: number | undefined) {
     const hashes = await extractFrameHashes(sourceFile);
 
     if (hashes.length === 0) {
         return undefined;
     }
 
-    const response = await search(hashes, apiKey, anilist);
-    updateAccountQuota(apiKey, response.quota, response.quotaUsed);
+    const response = await searchWithQuotaFallback(hashes, anilist);
 
     // Flatten all per-frame result sets and filter out low-confidence matches
     const matches = response.result
@@ -140,18 +139,15 @@ export async function runTraceIt(): Promise<void> {
     let failedCount = 0;
 
     for (let file of files) {
-        const activeKey = await getActiveKey(FRAME_EXTRACT_COUNT);
-
-        if (activeKey === undefined) {
-            console.error("No quota available. Please consider sponsoring https://trace.moe");
-            return;
-        }
-
         let winner;
 
         try {
-            winner = await identifyAnimeEpisode(file, activeKey, anilist);
+            winner = await identifyAnimeEpisode(file, anilist);
         } catch (error) {
+            if (error instanceof QuotaExhaustedFatalError) {
+                return;
+            }
+
             console.error(`Frame extraction/search failed for: ${file}`, error);
             failedCount++;
             continue;
@@ -325,6 +321,65 @@ export function updateAccountQuota(apiKey: string, quota: number, quotaUsed: num
     cachedAccount.account.quota = quota;
     cachedAccount.account.quotaUsed = quotaUsed;
     cachedAccount.fetchedAt = Date.now();
+}
+
+// Signals that no tier (free or API key) has quota left; the run should stop entirely.
+class QuotaExhaustedFatalError extends Error {}
+
+function reportQuotaExhausted(): void {
+    if (!config.TRACE_API_KEY) {
+        console.warn("Free tier quota consumed.");
+        console.error("No quota available. Please consider sponsoring https://trace.moe");
+        return;
+    }
+
+    const retryAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    console.error(`API key quota exhausted. Please try again after ${retryAt.toLocaleString()} (~24 hours from now).`);
+}
+
+/**
+ * Searches using the best available key, checking local quota knowledge before every
+ * attempt so we never call the API for a tier we already know is out of budget.
+ * Falls back from the free tier to TRACE_API_KEY (if configured) on a live 402, since
+ * the shared public/IP-based tier can be drained by other users between our checks.
+ */
+async function searchWithQuotaFallback(
+    hashes: number[][],
+    anilist: number | undefined,
+): Promise<TraceMoeResponse> {
+    let apiKey = await getActiveKey(FRAME_EXTRACT_COUNT);
+
+    if (apiKey === undefined) {
+        reportQuotaExhausted();
+        throw new QuotaExhaustedFatalError();
+    }
+
+    while (true) {
+        try {
+            const response = await search(hashes, apiKey, anilist);
+            updateAccountQuota(apiKey, response.quota, response.quotaUsed);
+            return response;
+        } catch (error) {
+            if (!(error instanceof QuotaExceededError)) {
+                throw error;
+            }
+
+            updateAccountQuota(apiKey, error.quota, error.quotaUsed);
+
+            if (apiKey === '' && config.TRACE_API_KEY) {
+                console.warn("Free tier quota exhausted, switching to configured TRACE_API_KEY.");
+            }
+
+            const nextKey = await getActiveKey(FRAME_EXTRACT_COUNT);
+
+            if (nextKey === undefined || nextKey === apiKey) {
+                reportQuotaExhausted();
+                throw new QuotaExhaustedFatalError();
+            }
+
+            apiKey = nextKey;
+        }
+    }
 }
 
 async function createDirectory(path: string): Promise<void> {

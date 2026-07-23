@@ -77,6 +77,13 @@ export type TraceMoeResponse = {
     quotaUsed: number;
 };
 
+export class QuotaExceededError extends Error {
+    constructor(message: string, public quota: number, public quotaUsed: number) {
+        super(message);
+        this.name = "QuotaExceededError";
+    }
+}
+
 // Upstream (trace.moe-api's /search) accepts at most 10 vectors per request.
 export async function search(
     vectors: number[][],
@@ -100,6 +107,15 @@ export async function search(
             }),
         }
     );
+
+    if (response.status === 402) {
+        const data = await response.json().catch(() => null) as Partial<TraceMoeResponse> | null;
+        throw new QuotaExceededError(
+            data?.error || "Search quota depleted",
+            data?.quota ?? 0,
+            data?.quotaUsed ?? 0,
+        );
+    }
 
     if (!response.ok) {
         throw new Error(
