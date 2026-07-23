@@ -1,4 +1,4 @@
-import {Account, checkUserQuota, queryAccount, search, TraceMoeResponse, TraceMoeResult} from "./trace-api.ts";
+import {Account, checkUserQuota, queryAccount, search, TraceMoeResult} from "./trace-api.ts";
 import {extractFrameHashes, FRAME_EXTRACT_COUNT} from "./extract.ts";
 import {config} from "./config.ts";
 import {resolveVideoFiles} from "./scan.ts";
@@ -20,26 +20,19 @@ type EpisodeVote = {
 };
 
 async function identifyAnimeEpisode(sourceFile: string, apiKey: string, anilist: number | undefined) {
-    const results: TraceMoeResponse[] = [];
-
     const hashes = await extractFrameHashes(sourceFile);
 
-    for (const hash of hashes.values()) {
-        const response = await search(hash, apiKey, anilist);
-        results.push(response);
-        updateAccountQuota(apiKey, response.quota, response.quotaUsed);
+    if (hashes.length === 0) {
+        return undefined;
     }
 
-    // Filter low-confidence results
-    const filteredResults = results.map(response => ({
-        ...response,
-        result: response.result.filter(
-            result => result.similarity >= SIMILARITY_THRESHOLD
-        ),
-    }));
+    const response = await search(hashes, apiKey, anilist);
+    updateAccountQuota(apiKey, response.quota, response.quotaUsed);
 
-    // Flatten all valid matches into one list
-    const matches = filteredResults.flatMap(response => response.result);
+    // Flatten all per-frame result sets and filter out low-confidence matches
+    const matches = response.result
+        .flat()
+        .filter(result => result.similarity >= SIMILARITY_THRESHOLD);
 
     // Bucket votes by series + episode
     const buckets = new Map<string, EpisodeVote>();

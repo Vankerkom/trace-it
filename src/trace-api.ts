@@ -71,13 +71,15 @@ export type TraceMoeResult = {
 export type TraceMoeResponse = {
     frameCount: number;
     error: string;
-    result: TraceMoeResult[];
+    // One result array per submitted vector, in submission order.
+    result: TraceMoeResult[][];
     quota: number;
     quotaUsed: number;
 };
 
+// Upstream (trace.moe-api's /search) accepts at most 10 vectors per request.
 export async function search(
-    vector: number[],
+    vectors: number[][],
     apiKey: string,
     anilist: number | undefined,
 ): Promise<TraceMoeResponse> {
@@ -94,7 +96,7 @@ export async function search(
                 ...(apiKey && {"x-trace-key": apiKey}),
             },
             body: JSON.stringify({
-                vector,
+                vector: vectors,
             }),
         }
     );
