@@ -20,17 +20,12 @@ type EpisodeVote = {
 };
 
 async function identifyAnimeEpisode(sourceFile: string, apiKey: string, anilist: number | undefined) {
-    let results: TraceMoeResponse[] = [];
+    const results: TraceMoeResponse[] = [];
 
-    try {
-        const hashes = await extractFrameHashes(sourceFile);
+    const hashes = await extractFrameHashes(sourceFile);
 
-        for (const hash of hashes.values()) {
-            results.push(await search(hash, apiKey, anilist));
-        }
-
-    } catch (error) {
-        console.error("Frame extraction/search failed:", error);
+    for (const hash of hashes.values()) {
+        results.push(await search(hash, apiKey, anilist));
     }
 
     // Filter low-confidence results
@@ -76,8 +71,6 @@ async function identifyAnimeEpisode(sourceFile: string, apiKey: string, anilist:
         bucket.bestSimilarity = Math.max(...similarities);
     }
 
-    console.log(buckets);
-
     // Find winning episode
     return [...buckets.values()]
         .filter(bucket => bucket.votes.length >= MIN_VOTES_REQUIRED)
@@ -119,14 +112,22 @@ export async function runTraceIt(): Promise<void> {
 
     const target = values.target;
     const outputDir = values.output;
-    const anilist = Number(values.anilist) || undefined;
 
     if (!target || !outputDir) {
         console.log("Usage: npm start -- -s ./source -o ./output")
         return;
     }
 
-    if (anilist) {
+    let anilist: number | undefined;
+
+    if (values.anilist !== undefined) {
+        anilist = Number(values.anilist);
+
+        if (!Number.isFinite(anilist)) {
+            console.error(`Invalid --anilist value: "${values.anilist}" is not a number.`);
+            return;
+        }
+
         console.log(`Filtering by anilist id: ${anilist}`)
     }
 
@@ -139,6 +140,10 @@ export async function runTraceIt(): Promise<void> {
     const files = await resolveVideoFiles(target);
     console.log(`Found ${files.length} potential video files in ${target}`);
 
+    let renamedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+
     for (let file of files) {
         const activeKey = await getActiveKey(FRAME_EXTRACT_COUNT);
 
@@ -147,13 +152,22 @@ export async function runTraceIt(): Promise<void> {
             return;
         }
 
-        const winner = await identifyAnimeEpisode(file, activeKey, anilist);
+        let winner;
 
-        consumeQuota(activeKey, FRAME_EXTRACT_COUNT);
+        try {
+            winner = await identifyAnimeEpisode(file, activeKey, anilist);
+        } catch (error) {
+            console.error(`Frame extraction/search failed for: ${file}`, error);
+            failedCount++;
+            continue;
+        } finally {
+            consumeQuota(activeKey, FRAME_EXTRACT_COUNT);
+        }
 
         if (!winner) {
             console.warn(`Could not confidently identify episode for: ${file}`);
-            return;
+            skippedCount++;
+            continue;
         }
 
         console.log({
@@ -172,9 +186,11 @@ export async function runTraceIt(): Promise<void> {
         });
 
         console.log(`Renamed to: ${newFile}`);
+        renamedCount++;
     }
 
     console.log();
+    console.log(`Renamed: ${renamedCount}, skipped (no confident match): ${skippedCount}, failed: ${failedCount}`);
     console.log("TraceIt - Completed, now you can do the rest! Like manually importing them into Sonarr to for your media server.");
 }
 
