@@ -10,7 +10,10 @@ export const FRAME_EXTRACT_COUNT = 5; // NOTE: Search multiple to ensure we don'
 // TODO Based on length, adjust the frame gaps to ensure it extracts frames inside the video.
 export function extractFrameHashes(inputFile: string, frameCount: number = FRAME_EXTRACT_COUNT): Promise<number[][]> {
     return new Promise((resolve, reject) => {
-        let stdoutBuffer = Buffer.alloc(0);
+        // Reused across frames instead of Buffer.concat-ing every incoming chunk,
+        // which would re-copy the whole accumulated buffer on each "data" event.
+        const frameBuffer = Buffer.allocUnsafe(FRAME_SIZE);
+        let frameOffset = 0;
         const output: number[][] = [];
 
         console.log("Extracting frames from: " + inputFile);
@@ -41,13 +44,19 @@ export function extractFrameHashes(inputFile: string, frameCount: number = FRAME
 
         os.setPriority(ffmpeg.pid!, os.constants.priority.PRIORITY_BELOW_NORMAL);
 
-        ffmpeg.stdout.on("data", (data) => {
-            stdoutBuffer = Buffer.concat([stdoutBuffer, data]);
-            while (stdoutBuffer.length >= FRAME_SIZE) {
-                const frameBuffer = stdoutBuffer.subarray(0, FRAME_SIZE);
-                stdoutBuffer = stdoutBuffer.subarray(FRAME_SIZE);
-                const vector = colorLayout(frameBuffer, VIDEO_WIDTH, VIDEO_HEIGHT);
-                output.push(vector);
+        ffmpeg.stdout.on("data", (data: Buffer) => {
+            let dataOffset = 0;
+            while (dataOffset < data.length) {
+                const bytesToCopy = Math.min(FRAME_SIZE - frameOffset, data.length - dataOffset);
+                data.copy(frameBuffer, frameOffset, dataOffset, dataOffset + bytesToCopy);
+                frameOffset += bytesToCopy;
+                dataOffset += bytesToCopy;
+
+                if (frameOffset === FRAME_SIZE) {
+                    const vector = colorLayout(frameBuffer, VIDEO_WIDTH, VIDEO_HEIGHT);
+                    output.push(vector);
+                    frameOffset = 0;
+                }
             }
         });
 
