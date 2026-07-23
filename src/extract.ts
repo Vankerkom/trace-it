@@ -6,7 +6,7 @@ const VIDEO_WIDTH = 320;
 const VIDEO_HEIGHT = 180;
 const FRAME_SIZE = VIDEO_WIDTH * VIDEO_HEIGHT * 3; // RGB
 export const FRAME_EXTRACT_COUNT = 5; // NOTE: Search multiple to ensure we don't query openings, endings, bumpers or recaps.
-const FRAME_START_OFFSET_SECONDS = 30;
+const FRAME_START_OFFSET_SECONDS = 35; // Using this offset on purpose to not hit into intros too much.
 const FRAME_INTERVAL_SECONDS = 65;
 
 // Extracts a single frame at an exact timestamp by seeking directly to it,
