@@ -9,7 +9,6 @@
   "private": true,
   "scripts": {
     "start": "tsx main.ts",
-    "benchmark:extract": "tsx scripts/benchmark-extract.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
